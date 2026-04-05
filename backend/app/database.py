@@ -68,13 +68,12 @@ def _merge_query_params(url: str, extra: dict[str, str]) -> str:
 
 
 def _finalize_supabase_url(url: str) -> str:
-    """Supavisor transaction mode (6543) needs pgbouncer=true; SQLAlchemy+psycopg needs prepare_threshold=None."""
+    """Ensure sslmode for Supabase. Do not add pgbouncer= — psycopg3 rejects it as an invalid libpq option."""
     try:
         parsed = urlparse(url)
     except Exception:
         return url
     host = (parsed.hostname or "").lower()
-    port = parsed.port
     if not host:
         return url
 
@@ -85,15 +84,24 @@ def _finalize_supabase_url(url: str) -> str:
     if not is_supabase:
         return url
 
-    extra: dict[str, str] = {}
-    if port == 6543 and "pgbouncer=true" not in (parsed.query or "").lower():
-        extra["pgbouncer"] = "true"
     if "sslmode=" not in (parsed.query or "").lower():
-        extra["sslmode"] = "require"
+        return _merge_query_params(url, {"sslmode": "require"})
+    return url
 
-    if not extra:
+
+def _strip_client_only_query_params(url: str) -> str:
+    """Remove URI params meant for Prisma/other clients; psycopg raises ProgrammingError on unknown options."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
         return url
-    return _merge_query_params(url, extra)
+    drop = frozenset({"pgbouncer", "connection_limit"})
+    pairs = [
+        (k, v)
+        for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+        if k.lower() not in drop
+    ]
+    return urlunparse(parsed._replace(query=urlencode(pairs)))
 
 
 def _sqlalchemy_driver_url(url: str) -> str:
@@ -165,7 +173,7 @@ def _connect_args(database_url: str) -> dict:
 
 
 _raw_url = _effective_database_url(settings.database_url)
-_db_url = _finalize_supabase_url(_raw_url)
+_db_url = _strip_client_only_query_params(_finalize_supabase_url(_raw_url))
 _engine_url = _sqlalchemy_driver_url(_db_url)
 
 _pool_cls = NullPool if _is_supabase_transaction_pooler(_db_url) else QueuePool
