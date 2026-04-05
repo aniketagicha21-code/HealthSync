@@ -1,0 +1,29 @@
+# Render Blueprint: FastAPI API + PostgreSQL
+# Dashboard: New → Blueprint → Connect this repo → apply. Then set secrets (see README).
+
+databases:
+  - name: healthsync-db
+    databaseName: healthsync
+    user: healthsync
+
+services:
+  - type: web
+    name: healthsync-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: healthsync-db
+          property: connectionString
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: MAX_UPLOAD_MB
+        value: "15"

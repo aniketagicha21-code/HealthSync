@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Env
+.env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Vite / IDE
+.vite/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python venv
+.venv/
+venv/
+backend/.venv/
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
