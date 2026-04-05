@@ -1,10 +1,11 @@
 import os
 import re
 import socket
-from urllib.parse import quote_plus, unquote, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote_plus, unquote, urlencode, urlparse, urlunparse
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import NullPool, QueuePool
 
 from app.config import settings
 
@@ -55,8 +56,72 @@ def _effective_database_url(url: str) -> str:
     return new_url
 
 
+def _merge_query_params(url: str, extra: dict[str, str]) -> str:
+    parsed = urlparse(url)
+    pairs = list(parse_qsl(parsed.query, keep_blank_values=True))
+    keys_lower = {k.lower() for k, _ in pairs}
+    for k, v in extra.items():
+        if k.lower() not in keys_lower:
+            pairs.append((k, v))
+            keys_lower.add(k.lower())
+    return urlunparse(parsed._replace(query=urlencode(pairs)))
+
+
+def _finalize_supabase_url(url: str) -> str:
+    """Supavisor transaction mode (6543) needs pgbouncer=true; SQLAlchemy+psycopg needs prepare_threshold=None."""
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return url
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    if not host:
+        return url
+
+    is_supabase = (
+        host.endswith(".supabase.co")
+        or ".pooler.supabase.com" in host
+    )
+    if not is_supabase:
+        return url
+
+    extra: dict[str, str] = {}
+    if port == 6543 and "pgbouncer=true" not in (parsed.query or "").lower():
+        extra["pgbouncer"] = "true"
+    if "sslmode=" not in (parsed.query or "").lower():
+        extra["sslmode"] = "require"
+
+    if not extra:
+        return url
+    return _merge_query_params(url, extra)
+
+
+def _sqlalchemy_driver_url(url: str) -> str:
+    """Use psycopg3 so we can set prepare_threshold=None for Supabase transaction pooler (port 6543)."""
+    u = url.strip()
+    if u.startswith("postgres://"):
+        u = "postgresql://" + u[len("postgres://") :]
+    scheme0 = u.split("://", 1)[0]
+    if "+" in scheme0:
+        return u
+    if u.startswith("postgresql://"):
+        return "postgresql+psycopg://" + u[len("postgresql://") :]
+    return u
+
+
+def _is_supabase_transaction_pooler(url: str) -> bool:
+    try:
+        p = urlparse(url)
+    except Exception:
+        return False
+    host = (p.hostname or "").lower()
+    if p.port != 6543:
+        return False
+    return host.endswith(".supabase.co") or ".pooler.supabase.com" in host
+
+
 def _connect_args(database_url: str) -> dict:
-    """TLS for Supabase; optional IPv4 hostaddr when an A record exists (dual-stack hosts)."""
+    """TLS + optional IPv4 hostaddr; disable prepared statements for PgBouncer transaction mode."""
     args: dict = {"connect_timeout": 10}
     try:
         parsed = urlparse(database_url)
@@ -75,6 +140,9 @@ def _connect_args(database_url: str) -> dict:
     query = (parsed.query or "").lower()
     if "sslmode=" not in query:
         args["sslmode"] = "require"
+
+    if _is_supabase_transaction_pooler(database_url):
+        args["prepare_threshold"] = None
 
     try:
         infos = socket.getaddrinfo(
@@ -96,15 +164,18 @@ def _connect_args(database_url: str) -> dict:
     return args
 
 
-_db_url = _effective_database_url(settings.database_url)
+_raw_url = _effective_database_url(settings.database_url)
+_db_url = _finalize_supabase_url(_raw_url)
+_engine_url = _sqlalchemy_driver_url(_db_url)
 
-engine = create_engine(
-    _db_url,
-    connect_args=_connect_args(_db_url),
-    pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
-)
+_pool_cls = NullPool if _is_supabase_transaction_pooler(_db_url) else QueuePool
+_pool_kw: dict = {"poolclass": _pool_cls}
+if _pool_cls is QueuePool:
+    _pool_kw.update({"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10})
+else:
+    _pool_kw["pool_pre_ping"] = False
+
+engine = create_engine(_engine_url, connect_args=_connect_args(_db_url), **_pool_kw)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

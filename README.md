@@ -75,6 +75,7 @@ Supabase’s **direct** host (`db.<project-ref>.supabase.co`) is **IPv6-only** i
 You may still paste the **session pooler** URI from Supabase → **Connect** if you prefer; that skips rewriting.
 
 - Append **`?sslmode=require`** if missing (the app adds it when rewriting).
+- **Transaction pooler** (`:6543`): the app adds **`pgbouncer=true`**, uses **psycopg3** with **`prepare_threshold=None`**, and **NullPool** so PgBouncer transaction mode works with SQLAlchemy. For a long-lived API like this, **session pooler** (`:5432`, `postgres.<ref>@aws-0-…`) is usually simpler if you hit pooler quirks.
 - **Never commit** the real password. URL-encode special characters in the password (`@`, `#`, `%`, …).
 
 The **direct** URI works on your laptop **only if** your network supports IPv6 to Supabase.
