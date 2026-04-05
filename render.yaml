@@ -1,11 +1,5 @@
-# Render Blueprint: FastAPI API + PostgreSQL
-# Dashboard: New → Blueprint → Connect this repo → apply. Then set secrets (see README).
-
-databases:
-  - name: healthsync-db
-    databaseName: healthsync
-    user: healthsync
-    plan: free
+# Render Blueprint: FastAPI API only (PostgreSQL on Supabase — see README).
+# Set DATABASE_URL in the Render dashboard to your Supabase connection string.
 
 services:
   - type: web
@@ -20,9 +14,7 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.8"
       - key: DATABASE_URL
-        fromDatabase:
-          name: healthsync-db
-          property: connectionString
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGINS
