@@ -1,17 +1,27 @@
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
 from app.database import init_db
 from app.routes import analyses, analyze, users
 from app.schemas import HealthResponse
 
+_log = logging.getLogger("uvicorn.error")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    init_db()
+    try:
+        await run_in_threadpool(init_db)
+    except Exception:
+        _log.exception(
+            "Database init failed (check DATABASE_URL and TLS for Supabase; see README)"
+        )
+        raise
     yield
 
 
