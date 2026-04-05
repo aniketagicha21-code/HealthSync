@@ -1,3 +1,5 @@
+import os
+import re
 import socket
 from urllib.parse import urlparse
 
@@ -6,14 +8,35 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
 
+# Direct DB host is IPv6-only (AAAA only in DNS). Hosts like Render have no IPv6 egress.
+_DIRECT_SUPABASE_DB = re.compile(r"^db\.([^.]+)\.supabase\.co$", re.IGNORECASE)
+
+
+def _raise_if_direct_supabase_on_render(database_url: str) -> None:
+    if not os.environ.get("RENDER"):
+        return
+    try:
+        parsed = urlparse(database_url)
+    except Exception:
+        return
+    host = (parsed.hostname or "").lower()
+    m = _DIRECT_SUPABASE_DB.match(host)
+    if not m:
+        return
+    ref = m.group(1)
+    raise RuntimeError(
+        f"DATABASE_URL uses Supabase direct host {host!r}, which is IPv6-only. "
+        "Render cannot reach it, so startup will always fail with 'Network is unreachable'.\n\n"
+        "Use the Session pooler URI instead: Supabase Dashboard → Connect → Session pooler → copy.\n"
+        "It looks like:\n"
+        f"  postgresql://postgres.{ref}:PASSWORD@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require\n"
+        "Match <region> to your project (e.g. West US / N. California → aws-0-us-west-1). "
+        f"The username must include your project ref: postgres.{ref}"
+    )
+
 
 def _connect_args(database_url: str) -> dict:
-    """TLS + IPv4 for Supabase; local Docker unchanged.
-
-    Render (and similar) often has no IPv6 egress. Supabase DNS returns AAAA first,
-    so psycopg2 tries IPv6 and fails with "Network is unreachable". Resolving an A
-    record and passing hostaddr forces IPv4 while the URL host still satisfies TLS.
-    """
+    """TLS for Supabase; optional IPv4 hostaddr when an A record exists (dual-stack hosts)."""
     args: dict = {"connect_timeout": 10}
     try:
         parsed = urlparse(database_url)
@@ -44,9 +67,16 @@ def _connect_args(database_url: str) -> dict:
         infos = []
     if infos:
         args["hostaddr"] = infos[0][4][0]
+    else:
+        try:
+            args["hostaddr"] = socket.gethostbyname(hostname)
+        except OSError:
+            pass
 
     return args
 
+
+_raise_if_direct_supabase_on_render(settings.database_url)
 
 engine = create_engine(
     settings.database_url,
