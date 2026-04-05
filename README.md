@@ -68,25 +68,16 @@ App: http://localhost:5173
 
 ### Supabase `DATABASE_URL` (production)
 
-Supabase’s **direct** host (`db.<project-ref>.supabase.co`) is **IPv6-only** in DNS. **Render cannot reach it** (no IPv6 egress), so deploys will hang on health checks or fail with “Network is unreachable.”
+Supabase’s **direct** host (`db.<project-ref>.supabase.co`) is **IPv6-only** in DNS. **Render has no IPv6 egress**, so that host does not work as-is.
 
-For **Render, Vercel, and most cloud hosts**, use the **Session pooler** URI instead:
+**On Render**, the API **rewrites** a direct `DATABASE_URL` to the **session pooler** automatically (`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`), defaulting **`SUPABASE_POOLER_REGION` to `us-west-1`** (West US / N. California). If your project is in another AWS region, set **`SUPABASE_POOLER_REGION`** on the Render service (e.g. `us-east-1`).
 
-1. Supabase Dashboard → **Connect** → **Session pooler** (or “Session mode”) → copy the URI.
-2. Shape (your project ref and region appear in the dashboard string):
+You may still paste the **session pooler** URI from Supabase → **Connect** if you prefer; that skips rewriting.
 
-```text
-postgresql://postgres.nwqiilsixeqmhlqnirzd:[YOUR-PASSWORD]@aws-0-us-west-1.pooler.supabase.com:5432/postgres?sslmode=require
-```
-
-- Username is **`postgres.<project-ref>`**, not `postgres` alone.
-- Host is **`aws-0-<aws-region>.pooler.supabase.com`** (region matches your project; e.g. West US / N. California → `us-west-1`).
-- Append **`?sslmode=require`** if missing.
+- Append **`?sslmode=require`** if missing (the app adds it when rewriting).
 - **Never commit** the real password. URL-encode special characters in the password (`@`, `#`, `%`, …).
 
-The **direct** URI is fine on your laptop **only if** your network supports IPv6 to Supabase.
-
-Set **`DATABASE_URL`** on **Render** to the **session pooler** string.
+The **direct** URI works on your laptop **only if** your network supports IPv6 to Supabase.
 
 ## Production deployment (matches local behavior)
 
@@ -104,10 +95,9 @@ git push -u origin main
 
 ### Step 2 — Supabase (database)
 
-1. Project **healthsync** should already exist (e.g. **West US / North California**).
-2. Dashboard → **Connect** → **Session pooler** → copy the URI (not “Direct connection”).
-3. Paste that value into Render as **`DATABASE_URL`**. Do **not** use `db.*.supabase.co` on Render (IPv6-only).
-4. Keep the string secret.
+1. Project **healthsync** should already exist.
+2. Paste **`DATABASE_URL`** into Render using either the **direct** URI from **Settings → Database** or the **Session pooler** URI from **Connect**. Direct URLs are rewritten on Render to the pooler unless you set **`SUPABASE_POOLER_REGION`** when the default region is wrong.
+3. Keep the string secret.
 
 ### Step 3 — Deploy backend (Render, no Render Postgres)
 
@@ -115,7 +105,8 @@ git push -u origin main
 2. Connect `aniketagicha21-code/HealthSync` / branch **`main`** so `render.yaml` applies.
 3. **`render.yaml` no longer creates a database** — only the **healthsync-api** web service.
 4. Set environment variables on **`healthsync-api`**:
-   - **`DATABASE_URL`** — Supabase **session pooler** URI with `sslmode=require` (see above).
+   - **`DATABASE_URL`** — Supabase URI (direct or pooler; see above).
+   - **`SUPABASE_POOLER_REGION`** (optional) — e.g. `us-east-1` if not **us-west-1**.
    - **`OPENAI_API_KEY`**
    - **`CORS_ORIGINS`** — your Vercel origins, comma-separated, e.g.  
      `https://your-app.vercel.app,https://your-app-git-main-xxx.vercel.app`

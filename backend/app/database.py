@@ -1,38 +1,58 @@
 import os
 import re
 import socket
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, unquote, urlparse, urlunparse
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.config import settings
 
-# Direct DB host is IPv6-only (AAAA only in DNS). Hosts like Render have no IPv6 egress.
+# Direct DB host is IPv6-only in DNS. Render has no IPv6 egress — rewrite to session pooler on deploy.
 _DIRECT_SUPABASE_DB = re.compile(r"^db\.([^.]+)\.supabase\.co$", re.IGNORECASE)
 
 
-def _raise_if_direct_supabase_on_render(database_url: str) -> None:
+def _effective_database_url(url: str) -> str:
+    """On Render, map direct db.<ref>.supabase.co URLs to IPv4-capable session pooler."""
     if not os.environ.get("RENDER"):
-        return
+        return url
     try:
-        parsed = urlparse(database_url)
+        parsed = urlparse(url)
     except Exception:
-        return
+        return url
     host = (parsed.hostname or "").lower()
     m = _DIRECT_SUPABASE_DB.match(host)
     if not m:
-        return
+        return url
+
     ref = m.group(1)
-    raise RuntimeError(
-        f"DATABASE_URL uses Supabase direct host {host!r}, which is IPv6-only. "
-        "Render cannot reach it, so startup will always fail with 'Network is unreachable'.\n\n"
-        "Use the Session pooler URI instead: Supabase Dashboard → Connect → Session pooler → copy.\n"
-        "It looks like:\n"
-        f"  postgresql://postgres.{ref}:PASSWORD@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require\n"
-        "Match <region> to your project (e.g. West US / N. California → aws-0-us-west-1). "
-        f"The username must include your project ref: postgres.{ref}"
+    region = (os.environ.get("SUPABASE_POOLER_REGION") or "us-west-1").strip() or "us-west-1"
+    pooler = f"aws-0-{region}.pooler.supabase.com"
+    user = f"postgres.{ref}"
+    pw = unquote(parsed.password) if parsed.password else ""
+    port = parsed.port or 5432
+    netloc = f"{quote_plus(user)}:{quote_plus(pw)}@{pooler}:{port}"
+
+    query = parsed.query or ""
+    if "sslmode=" not in query.lower():
+        query = f"{query}&sslmode=require" if query else "sslmode=require"
+
+    new_url = urlunparse(
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path or "/postgres",
+            parsed.params,
+            query,
+            parsed.fragment,
+        )
     )
+    print(
+        f"healthsync: using Supabase session pooler {pooler} (direct db host is IPv6-only on Render). "
+        f"Set SUPABASE_POOLER_REGION if the pool region is not {region}.",
+        flush=True,
+    )
+    return new_url
 
 
 def _connect_args(database_url: str) -> dict:
@@ -76,11 +96,11 @@ def _connect_args(database_url: str) -> dict:
     return args
 
 
-_raise_if_direct_supabase_on_render(settings.database_url)
+_db_url = _effective_database_url(settings.database_url)
 
 engine = create_engine(
-    settings.database_url,
-    connect_args=_connect_args(settings.database_url),
+    _db_url,
+    connect_args=_connect_args(_db_url),
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=10,
