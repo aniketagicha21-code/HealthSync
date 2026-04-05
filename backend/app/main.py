@@ -1,4 +1,6 @@
 import logging
+import sys
+import traceback
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -21,6 +23,8 @@ async def lifespan(app: FastAPI):
         _log.exception(
             "Database init failed (check DATABASE_URL and TLS for Supabase; see README)"
         )
+        traceback.print_exc(file=sys.stdout)
+        sys.stdout.flush()
         raise
     yield
 

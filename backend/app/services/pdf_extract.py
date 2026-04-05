@@ -1,9 +1,9 @@
 import io
 
-import pdfplumber
-
 
 def extract_text_from_pdf(file_bytes: bytes, max_pages: int = 40) -> str:
+    import pdfplumber
+
     buf = io.BytesIO(file_bytes)
     parts: list[str] = []
     with pdfplumber.open(buf) as pdf:
