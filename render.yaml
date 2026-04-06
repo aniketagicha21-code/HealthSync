@@ -1,5 +1,11 @@
-# Render Blueprint: FastAPI API only (PostgreSQL on Supabase — see README).
-# Set DATABASE_URL in the Render dashboard to your Supabase connection string.
+# Blueprint: FastAPI web service + Render managed PostgreSQL.
+# DATABASE_URL is injected from the database (no manual copy/paste).
+
+databases:
+  - name: healthsync-db
+    databaseName: healthsync
+    user: healthsync
+    plan: basic
 
 services:
   - type: web
@@ -8,7 +14,6 @@ services:
     plan: free
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    # stderr is easy to miss in Render deploy logs; log to stdout + unbuffered Python.
     startCommand: python -u -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --log-config uvicorn_log_render.json
     healthCheckPath: /api/health
     envVars:
@@ -17,9 +22,9 @@ services:
       - key: PYTHON_VERSION
         value: "3.12.8"
       - key: DATABASE_URL
-        sync: false
-      - key: SUPABASE_POOLER_REGION
-        sync: false
+        fromDatabase:
+          name: healthsync-db
+          property: connectionString
       - key: OPENAI_API_KEY
         sync: false
       - key: CORS_ORIGINS

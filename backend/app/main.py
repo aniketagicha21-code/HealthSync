@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
         await run_in_threadpool(init_db)
     except Exception:
         _log.exception(
-            "Database init failed (check DATABASE_URL and TLS for Supabase; see README)"
+            "Database init failed (check DATABASE_URL and Render Postgres connectivity; see README)"
         )
         traceback.print_exc(file=sys.stdout)
         sys.stdout.flush()

@@ -60,29 +60,19 @@ App: http://localhost:5173
 
 | Variable | Where | Example |
 |----------|--------|---------|
-| `DATABASE_URL` | Backend | Local: `postgresql://postgres:postgres@127.0.0.1:5433/healthsync`. Supabase: see below. |
+| `DATABASE_URL` | Backend | Local: `postgresql://postgres:postgres@127.0.0.1:5433/healthsync`. Production: from **Render Postgres** (see below). |
 | `OPENAI_API_KEY` | Backend | `sk-proj-...` |
 | `CORS_ORIGINS` | Backend | Comma-separated origins, no spaces after commas |
 | `MAX_UPLOAD_MB` | Backend | `15` |
 | `VITE_API_URL` | Vercel (build-time) | `https://your-service.onrender.com` — **no trailing slash** |
 
-### Supabase `DATABASE_URL` (production)
+### Production `DATABASE_URL` (Render Postgres)
 
-Supabase’s **direct** host (`db.<project-ref>.supabase.co`) is **IPv6-only** in DNS. **Render has no IPv6 egress**, so that host does not work as-is.
+Use **Render managed PostgreSQL**. The URL Render provides (internal or external) is a normal `postgresql://…` string, usually including TLS (`sslmode=require`). Paste it as **`DATABASE_URL`** on the web service, or use **`render.yaml`** so it is wired with `fromDatabase` (no Supabase-specific options or rewrites in app code).
 
-**On Render**, the API **rewrites** a direct `DATABASE_URL` to the **session pooler** automatically (`postgres.<ref>@aws-0-<region>.pooler.supabase.com:5432`), defaulting **`SUPABASE_POOLER_REGION` to `us-west-1`** (West US / N. California). If your project is in another AWS region, set **`SUPABASE_POOLER_REGION`** on the Render service (e.g. `us-east-1`).
+## Production deployment
 
-You may still paste the **session pooler** URI from Supabase → **Connect** if you prefer; that skips rewriting.
-
-- Append **`?sslmode=require`** if missing (the app adds it when rewriting).
-- **Transaction pooler** (`:6543`): the app uses **psycopg3** with **`prepare_threshold=None`** and **NullPool** (Prisma-style `pgbouncer=true` in the URI is stripped — psycopg does not accept that option). For a long-lived API, **session pooler** (`:5432`) is often simpler.
-- **Never commit** the real password. URL-encode special characters in the password (`@`, `#`, `%`, …).
-
-The **direct** URI works on your laptop **only if** your network supports IPv6 to Supabase.
-
-## Production deployment (matches local behavior)
-
-**Stack:** React on **Vercel**, FastAPI on **Render**, PostgreSQL on **Supabase** (free tier). The browser calls your Render API; the API uses `DATABASE_URL` to reach Supabase and OpenAI.
+**Stack:** React on **Vercel**, FastAPI + **Render Postgres** on **Render**.
 
 ### Step 1 — Push to GitHub
 
@@ -94,46 +84,32 @@ git remote add origin https://github.com/aniketagicha21-code/HealthSync.git   # 
 git push -u origin main
 ```
 
-### Step 2 — Supabase (database)
+### Step 2 — Deploy with Blueprint (`render.yaml`)
 
-1. Project **healthsync** should already exist.
-2. Paste **`DATABASE_URL`** into Render using either the **direct** URI from **Settings → Database** or the **Session pooler** URI from **Connect**. Direct URLs are rewritten on Render to the pooler unless you set **`SUPABASE_POOLER_REGION`** when the default region is wrong.
-3. Keep the string secret.
-
-### Step 3 — Deploy backend (Render, no Render Postgres)
-
-1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint** (or edit the existing **Web Service**).
-2. Connect `aniketagicha21-code/HealthSync` / branch **`main`** so `render.yaml` applies.
-3. **`render.yaml` no longer creates a database** — only the **healthsync-api** web service.
-4. Set environment variables on **`healthsync-api`**:
-   - **`DATABASE_URL`** — Supabase URI (direct or pooler; see above).
-   - **`SUPABASE_POOLER_REGION`** (optional) — e.g. `us-east-1` if not **us-west-1**.
-   - **`OPENAI_API_KEY`**
-   - **`CORS_ORIGINS`** — your Vercel origins, comma-separated, e.g.  
-     `https://your-app.vercel.app,https://your-app-git-main-xxx.vercel.app`
+1. [Render Dashboard](https://dashboard.render.com) → **New** → **Blueprint**.
+2. Connect repo **`aniketagicha21-code/HealthSync`**, branch **`main`**.
+3. The blueprint creates **Render Postgres** (`healthsync-db`, **Basic** plan in YAML — change `plan` in `render.yaml` if you need another tier) and **healthsync-api** with **`DATABASE_URL`** from that database.
+4. Set **sync** secrets on the web service: **`OPENAI_API_KEY`**, **`CORS_ORIGINS`** (your Vercel origins, comma-separated).
 5. Deploy and confirm **GET** `https://<your-render-service>/api/health` returns JSON.
+
+**Already have a Postgres instance?** Remove the `databases:` block from `render.yaml` and set **`DATABASE_URL`** manually to Render’s connection string (or use `fromDatabase` pointing at an existing database name in your Render account per [Blueprint spec](https://render.com/docs/blueprint-spec)).
 
 **Cold starts:** Free Render web services spin down after inactivity; the first request may take ~30–60s.
 
-### Step 4 — Deploy frontend (Vercel)
+### Step 3 — Frontend (Vercel)
 
-1. [Vercel Dashboard](https://vercel.com) → **Add New…** → **Project** → import `aniketagicha21-code/HealthSync`.
-2. **Root Directory:** `frontend` (important).
-3. **Framework Preset:** Vite (auto-detected).
-4. **Build Command:** `npm run build` (default).
-5. **Output Directory:** `dist` (default).
-6. **Environment Variables** (Production and Preview):
-   - **`VITE_API_URL`** = your Render API base URL, e.g. `https://healthsync-api.onrender.com` (**no** trailing slash).
-7. Deploy. If you change `VITE_API_URL`, **redeploy** so the build picks it up.
+1. [Vercel Dashboard](https://vercel.com) → **Add New…** → **Project** → import the repo.
+2. **Root Directory:** `frontend`.
+3. **Environment Variables:** **`VITE_API_URL`** = your Render API base URL (no trailing slash).
+4. Deploy.
 
-### Step 5 — CORS
+### Step 4 — CORS
 
-Render → **healthsync-api** → **Environment** → **`CORS_ORIGINS`** must list every frontend origin (production + preview + custom domains), exact scheme and host.
+**`CORS_ORIGINS`** on **healthsync-api** must include every browser origin (production + preview + custom domains).
 
-### Step 6 — Verify end-to-end
+### Step 5 — Verify
 
-1. Toggle theme, upload a PDF, results, **History** — same as local.
-2. If the API fails, check Render logs, `DATABASE_URL` (Supabase reachable from Render), and `CORS_ORIGINS`.
+Upload a PDF, open results and **History**; if the API errors, check Render logs and **`CORS_ORIGINS`**.
 
 ## License
 
